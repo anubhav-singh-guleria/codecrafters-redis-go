@@ -33,7 +33,7 @@ func main() {
 func handleClient(conn net.Conn) {
 	// Ensure we close the connection after we're done
 	defer conn.Close()
-
+	store := make(map[string]string)
 	for {
 		buf := make([]byte, 1024)
 		n, err := conn.Read(buf)
@@ -50,8 +50,12 @@ func handleClient(conn net.Conn) {
 			conn.Write([]byte("+PONG\r\n"))
 		}else if(command_list[2] == "ECHO"){
 			echo_message := strings.Join(command_list[3:],"\r\n")
-			fmt.Println("echo message: "+echo_message)
 			conn.Write([]byte(echo_message))
+		}else if(command_list[2] == "SET"){
+			store[command_list[3] + command_list[4]] = command_list[5] + "\r\n" + command_list[6] + "\r\n"
+			conn.Write([]byte("+OK\r\n"))
+		}else if(command_list[2] == "GET"){
+			conn.Write([]byte(store[command_list[3] + command_list[4]]))
 		}
 	}
 }
