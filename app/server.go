@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 )
 
 func main() {
@@ -35,7 +36,7 @@ func handleClient(conn net.Conn) {
 
 	for {
 		buf := make([]byte, 1024)
-		_, err := conn.Read(buf)
+		n, err := conn.Read(buf)
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -43,6 +44,14 @@ func handleClient(conn net.Conn) {
 			fmt.Println("Error", err)
 			return
 		}
-		conn.Write([]byte("+PONG\r\n"))
+		command_list := strings.Split(string(buf[:n]), "\r\n")
+		fmt.Println(command_list)
+		if(command_list[2] == "PING"){
+			conn.Write([]byte("+PONG\r\n"))
+		}else if(command_list[2] == "ECHO"){
+			echo_message := strings.Join(command_list[3:],"\r\n")
+			fmt.Println("echo message: "+echo_message)
+			conn.Write([]byte(echo_message))
+		}
 	}
 }
