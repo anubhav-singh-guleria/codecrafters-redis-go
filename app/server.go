@@ -7,6 +7,9 @@ import (
 	"net"
 	"os"
 	"strings"
+	"github.com/zekroTJA/timedmap"
+	"time"
+	"strconv"
 )
 
 func main() {
@@ -33,7 +36,7 @@ func main() {
 func handleClient(conn net.Conn) {
 	// Ensure we close the connection after we're done
 	defer conn.Close()
-	store := make(map[string]string)
+	store := timedmap.New(50 * time.Millisecond)
 	for {
 		buf := make([]byte, 1024)
 		n, err := conn.Read(buf)
@@ -52,10 +55,25 @@ func handleClient(conn net.Conn) {
 			echo_message := strings.Join(command_list[3:],"\r\n")
 			conn.Write([]byte(echo_message))
 		}else if(command_list[2] == "SET"){
-			store[command_list[3] + command_list[4]] = command_list[5] + "\r\n" + command_list[6] + "\r\n"
+			if(len(command_list) >= 10){
+				exp_time, _ := strconv.Atoi(command_list[10])
+				store.Set(command_list[3] + command_list[4],command_list[5] + "\r\n" + command_list[6] + "\r\n",time.Millisecond * time.Duration(exp_time))
+				
+			}else{
+				store.Set(command_list[3] + command_list[4],command_list[5] + "\r\n" + command_list[6] + "\r\n",time.Hour * 24)
+			}
 			conn.Write([]byte("+OK\r\n"))
 		}else if(command_list[2] == "GET"){
-			conn.Write([]byte(store[command_list[3] + command_list[4]]))
+			conn.Write([]byte(printKeyVal(store, command_list[3] + command_list[4])))
 		}
+	}	
+}
+
+func printKeyVal(tm *timedmap.TimedMap, key string) string {
+	d, ok := tm.GetValue(key).(string)
+	if !ok {
+		return "$-1\r\n"
 	}
+
+	return d;
 }

@@ -9,3 +9,5 @@
 module github.com/codecrafters-io/redis-starter-go
 
 go 1.22
+
+require github.com/zekroTJA/timedmap v1.5.2 // indirect
