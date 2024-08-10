@@ -19,7 +19,6 @@ func main() {
 	if(len(args) > 2 && args[1] == "--port"){
 		port = args[2]
 	}
-	fmt.Println(args)
 	listner, err := net.Listen("tcp", "0.0.0.0:" + port)
 	if err != nil {
 		fmt.Println("Failed to bind to port 6379")
@@ -70,6 +69,8 @@ func handleClient(conn net.Conn) {
 			conn.Write([]byte("+OK\r\n"))
 		}else if(command_list[2] == "GET"){
 			conn.Write([]byte(printKeyVal(store, command_list[3] + command_list[4])))
+		}else if(command_list[2] == "INFO") {
+			conn.Write([]byte("$11\r\nrole:master\r\n"))
 		}
 	}	
 }
