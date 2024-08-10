@@ -16,9 +16,22 @@ func main() {
 	fmt.Println("Logs from your program will appear here!")
 	args := os.Args;
 	port := "6379"
+	role := "master"
+	master_host := "0.0.0.0"
+	master_port := "6379"
+	// fmt.Println(args)
 	if(len(args) > 2 && args[1] == "--port"){
 		port = args[2]
 	}
+
+	if(len(args) > 4 && args[3] == "--replicaof"){
+		role = "slave"
+		master_details := strings.Split(args[4], " ");
+		master_host = master_details[0]
+		master_port = master_details[1]
+
+	}
+	
 	listner, err := net.Listen("tcp", "0.0.0.0:" + port)
 	if err != nil {
 		fmt.Println("Failed to bind to port 6379")
@@ -32,12 +45,12 @@ func main() {
 			fmt.Println("Error accepting connection: ", err.Error())
 			os.Exit(1)
 		}
-		go handleClient(con)
+		go handleClient(con, role, master_host, master_port)
 	}
 
 }
 
-func handleClient(conn net.Conn) {
+func handleClient(conn net.Conn, role string, master_host string, master_port string) {
 	// Ensure we close the connection after we're done
 	defer conn.Close()
 	store := timedmap.New(50 * time.Millisecond)
@@ -70,7 +83,11 @@ func handleClient(conn net.Conn) {
 		}else if(command_list[2] == "GET"){
 			conn.Write([]byte(printKeyVal(store, command_list[3] + command_list[4])))
 		}else if(command_list[2] == "INFO") {
-			conn.Write([]byte("$11\r\nrole:master\r\n"))
+			if(role == "master"){
+				conn.Write([]byte("$11\r\nrole:master\r\n"))
+			}else{
+				conn.Write([]byte("$10\r\nrole:slave\r\n"))
+			}
 		}
 	}	
 }
