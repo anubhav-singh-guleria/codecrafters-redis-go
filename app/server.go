@@ -38,7 +38,15 @@ func main() {
 
 		defer connection.Close()
 		connection.Write([]byte("*1\r\n$4\r\nPING\r\n"))
-
+		buf := make([]byte, 1024)
+		n, _ := connection.Read(buf)
+		if(n != 0){
+			connection.Write([]byte("*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$4\r\n6380\r\n"))
+			n, _ = connection.Read(buf)
+			if(n != 0){
+				connection.Write([]byte("*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n"))
+			}
+		}
 	}
 
 	listner, err := net.Listen("tcp", "0.0.0.0:"+port)
