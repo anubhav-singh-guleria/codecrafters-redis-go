@@ -126,6 +126,8 @@ func handleClient(conn net.Conn, role string, master_host string, master_port st
 			}
 		} else if(command_list[2] == "REPLCONF"){
 			conn.Write([]byte("+OK\r\n"))
+		} else if(command_list[2] == "PSYNC"){
+			conn.Write([]byte("+FULLRESYNC <REPL_ID> 0\r\n"))
 		}
 	}
 }
