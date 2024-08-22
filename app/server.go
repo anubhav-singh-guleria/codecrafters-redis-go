@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"encoding/hex"
 )
 
 func main() {
@@ -19,6 +20,7 @@ func main() {
 	role := "master"
 	master_host := "0.0.0.0"
 	master_port := "6379"
+	rdb := ""
 	// fmt.Println(args)
 	if len(args) > 2 && args[1] == "--port" {
 		port = args[2]
@@ -68,12 +70,12 @@ func main() {
 			os.Exit(1)
 		}
 
-		go handleClient(con, role, master_host, master_port)
+		go handleClient(con, role, master_host, master_port, &rdb)
 	}
 
 }
 
-func handleClient(conn net.Conn, role string, master_host string, master_port string) {
+func handleClient(conn net.Conn, role string, master_host string, master_port string, rdb* string) {
 	// Ensure we close the connection after we're done
 	defer conn.Close()
 	store := timedmap.New(50 * time.Millisecond)
@@ -128,6 +130,8 @@ func handleClient(conn net.Conn, role string, master_host string, master_port st
 			conn.Write([]byte("+OK\r\n"))
 		} else if(command_list[2] == "PSYNC"){
 			conn.Write([]byte("+FULLRESYNC "+"8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"+" 0\r\n"))
+			var emptyRDB, _ = hex.DecodeString("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2")
+			_, _ = conn.Write(append([]byte(fmt.Sprintf("$%d\r\n", len(emptyRDB))), emptyRDB...))
 		}
 	}
 }
