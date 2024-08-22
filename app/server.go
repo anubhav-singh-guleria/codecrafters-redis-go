@@ -84,7 +84,14 @@ func handleClient(conn net.Conn, role string, master_host string, master_port st
 			conn.Write([]byte(printKeyVal(store, command_list[3] + command_list[4])))
 		}else if(command_list[2] == "INFO") {
 			if(role == "master"){
-				conn.Write([]byte("$11\r\nrole:master\r\n"))
+				
+				if(len(command_list)>=5){
+					if(command_list[4] == "replication"){
+						conn.Write([]byte("$89\r\nrole:master\r\nmaster_repl_offset:0\r\nmaster_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb\r\n"))
+					}
+				}else{
+					conn.Write([]byte("$11\r\nrole:master\r\n"))
+				}
 			}else{
 				conn.Write([]byte("$10\r\nrole:slave\r\n"))
 			}
@@ -97,6 +104,5 @@ func printKeyVal(tm *timedmap.TimedMap, key string) string {
 	if !ok {
 		return "$-1\r\n"
 	}
-
 	return d;
 }
