@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"github.com/zekroTJA/timedmap"
@@ -10,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"encoding/hex"
 )
 
 func main() {
@@ -42,13 +42,13 @@ func main() {
 		connection.Write([]byte("*1\r\n$4\r\nPING\r\n"))
 		buf := make([]byte, 1024)
 		n, _ := connection.Read(buf)
-		if(n != 0){
+		if n != 0 {
 			connection.Write([]byte("*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$4\r\n6380\r\n"))
 			n, _ = connection.Read(buf)
-			if(n != 0){
+			if n != 0 {
 				connection.Write([]byte("*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n"))
 				n, _ = connection.Read(buf)
-				if(n != 0){
+				if n != 0 {
 					connection.Write([]byte("*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n"))
 				}
 			}
@@ -75,10 +75,20 @@ func main() {
 
 }
 
-func handleClient(conn net.Conn, role string, master_host string, master_port string, rdb* string) {
+func handleClient(conn net.Conn, role string, master_host string, master_port string, rdb *string) {
 	// Ensure we close the connection after we're done
 	defer conn.Close()
 	store := timedmap.New(50 * time.Millisecond)
+	connection, err := net.Dial("tcp", master_host+":"+master_port)
+	if err != nil {
+		fmt.Println("43: Failed to bind to port: " + master_port)
+		os.Exit(1)
+	}
+
+	defer connection.Close()
+
+	// buf := make([]byte, 1024)
+	// n, _ := connection.Read(buf)
 	for {
 		buf := make([]byte, 1024)
 		n, err := conn.Read(buf)
@@ -100,11 +110,12 @@ func handleClient(conn net.Conn, role string, master_host string, master_port st
 			if len(command_list) >= 10 {
 				exp_time, _ := strconv.Atoi(command_list[10])
 				store.Set(command_list[3]+command_list[4], command_list[5]+"\r\n"+command_list[6]+"\r\n", time.Millisecond*time.Duration(exp_time))
-
+				
 			} else {
 				store.Set(command_list[3]+command_list[4], command_list[5]+"\r\n"+command_list[6]+"\r\n", time.Hour*24)
 			}
 			conn.Write([]byte("+OK\r\n"))
+			connection.Write([]byte(string(buf[:n])))
 		} else if command_list[2] == "GET" {
 			conn.Write([]byte(printKeyVal(store, command_list[3]+command_list[4])))
 		} else if command_list[2] == "INFO" {
@@ -126,10 +137,10 @@ func handleClient(conn net.Conn, role string, master_host string, master_port st
 					conn.Write([]byte("$10\r\nrole:slave\r\n"))
 				}
 			}
-		} else if(command_list[2] == "REPLCONF"){
+		} else if command_list[2] == "REPLCONF" {
 			conn.Write([]byte("+OK\r\n"))
-		} else if(command_list[2] == "PSYNC"){
-			conn.Write([]byte("+FULLRESYNC "+"8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"+" 0\r\n"))
+		} else if command_list[2] == "PSYNC" {
+			conn.Write([]byte("+FULLRESYNC " + "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb" + " 0\r\n"))
 			var emptyRDB, _ = hex.DecodeString("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2")
 			_, _ = conn.Write(append([]byte(fmt.Sprintf("$%d\r\n", len(emptyRDB))), emptyRDB...))
 		}
