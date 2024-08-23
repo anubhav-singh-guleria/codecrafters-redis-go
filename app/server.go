@@ -119,6 +119,7 @@ func handleClient(conn net.Conn, role string, master_host string, master_port st
 			}
 			conn.Write([]byte("+OK\r\n"))
 			if(role == "slave"){
+				fmt.Println("slave sending set request to master")
 				slave_connection.Write([]byte(string(buf[:n])))
 			}
 		} else if command_list[2] == "GET" {
