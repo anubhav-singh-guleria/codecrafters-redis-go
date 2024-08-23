@@ -1,162 +1,259 @@
 package main
-
 import (
-	"encoding/hex"
-	"errors"
+	"bufio"
+	"encoding/base64"
+	"flag"
 	"fmt"
-	"github.com/zekroTJA/timedmap"
 	"io"
 	"net"
-	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
-
+var info = map[string]map[string]any{
+	// "server": {
+	// 	"version":       "0.0.1",
+	// 	"redis_version": "7.6.2",
+	// },
+	"replication": {
+		"role": "master",
+	},
+}
+var items = map[string]string{}
+var expirations = map[string]time.Time{}
+var lock = sync.RWMutex{}
+var con net.Conn
+var master net.Conn
+var slaves = []net.Conn{}
 func main() {
-	fmt.Println("Logs from your program will appear here!")
-	args := os.Args
-	port := "6379"
-	role := "master"
-	master_host := "0.0.0.0"
-	master_port := "6379"
-	rdb := ""
-	// fmt.Println(args)
-	if len(args) > 2 && args[1] == "--port" {
-		port = args[2]
-	}
-
-	if len(args) > 4 && args[3] == "--replicaof" {
-		role = "slave"
-		master_details := strings.Split(args[4], " ")
-		master_host = master_details[0]
-		master_port = master_details[1]
-
-		connection, err := net.Dial("tcp", master_host+":"+master_port)
+	replicaOf := flag.String("replicaof", "", "replicate to another redis server")
+	p := flag.Int("port", 6379, "port to listen on")
+	flag.Parse()
+	if *replicaOf != "" { // TODO: handle --port 8080 --replicaof localhost 8181
+		fmt.Println("replicating to", *replicaOf)
+		fmt.Println("args", flag.Args())
+		info["replication"]["role"] = "slave"
+		con, err := net.Dial("tcp", *replicaOf+":"+flag.Args()[0])
 		if err != nil {
-			fmt.Println("43: Failed to bind to port: " + master_port)
-			os.Exit(1)
+			panic(err)
 		}
-
-		defer connection.Close()
-		connection.Write([]byte("*1\r\n$4\r\nPING\r\n"))
+		defer con.Close()
+		con.Write([]byte("*1\r\n$4\r\nPING\r\n"))
 		buf := make([]byte, 1024)
-		n, _ := connection.Read(buf)
-		if n != 0 {
-			connection.Write([]byte("*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$4\r\n6380\r\n"))
-			n, _ = connection.Read(buf)
-			if n != 0 {
-				connection.Write([]byte("*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n"))
-				n, _ = connection.Read(buf)
-				if n != 0 {
-					connection.Write([]byte("*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n"))
+		n, _ := con.Read(buf)
+		fmt.Println("ping", string(buf[:n]))
+		con.Write([]byte(fmt.Sprintf("*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$4\r\n%d\r\n", *p)))
+		buf = make([]byte, 1024)
+		n, _ = con.Read(buf)
+		fmt.Println("replconf", string(buf[:n]))
+		// con.Write([]byte("*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n"))
+		// REPLCONF capa eof capa psync2
+		con.Write([]byte("*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$3\r\neof\r\n"))
+		buf = make([]byte, 1024)
+		n, _ = con.Read(buf)
+		fmt.Println("replconf", string(buf[:n]))
+		// con.Write([]byte("*1\r\n$4\r\nINFO\r\n"))
+		// buf = make([]byte, 10240)
+		// n, _ = con.Read(buf)
+		// replid := ""
+		// for _, line := range strings.Split(string(buf[:n]), "\r\n") {
+		// 	if strings.HasPrefix(line, "master_replid:") {
+		// 		replid = strings.Split(line, ":")[1]
+		// 		break
+		// 	}
+		// }
+		// fmt.Println("replid", replid)
+		// replid := "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
+		// con.Write([]byte(fmt.Sprintf("*3\r\n$5\r\nPSYNC\r\n$%d\r\n%s\r\n$2\r\n-1\r\n", len(replid), replid)))
+		con.Write([]byte("*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n"))
+		buf = make([]byte, 1024)
+		n, _ = con.Read(buf)
+		fmt.Println("psync", string(buf[:n]))
+	}
+	if info["replication"]["role"] == "master" {
+		info["replication"]["master_replid"] = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
+		info["replication"]["master_repl_offset"] = "0"
+	}
+	l, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", *p))
+	if err != nil {
+		panic(err)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			for k, v := range expirations {
+				if time.Now().After(v) {
+					lock.Lock()
+					delete(items, k)
+					delete(expirations, k)
+					lock.Unlock()
 				}
 			}
+			time.Sleep(time.Second * 5)
 		}
-	}
-
-	listner, err := net.Listen("tcp", "0.0.0.0:"+port)
-	if err != nil {
-		fmt.Println("37: Failed to bind to port: " + port)
-		os.Exit(1)
-	}
-	defer listner.Close()
-
+	}()
 	for {
-		fmt.Println("a command requested")
-		con, err := listner.Accept()
+		con, err := l.Accept()
 		if err != nil {
-			fmt.Println("Error accepting connection: ", err.Error())
-			os.Exit(1)
+			fmt.Println(err.Error())
+			continue
 		}
-
-		go handleClient(con, role, master_host, master_port, &rdb)
+		go handleClient(con)
 	}
-
 }
-
-func handleClient(conn net.Conn, role string, master_host string, master_port string, rdb *string) {
-	// Ensure we close the connection after we're done
-	defer conn.Close()
-	store := timedmap.New(50 * time.Millisecond)
-	var slave_connection net.Conn
-	if role == "slave" {
-		connection, err := net.Dial("tcp", master_host+":"+master_port)
-		if err != nil {
-			fmt.Println("43: Failed to bind to port: " + master_port)
-			os.Exit(1)
-		}
-		slave_connection = connection;
-		defer connection.Close()
+func readCommand(c net.Conn) (string, []string, error) {
+	r := bufio.NewReader(c)
+	d, err := r.ReadByte()
+	if err != nil && err != io.EOF {
+		return "", nil, err
 	}
-
-	// buf := make([]byte, 1024)
-	// n, _ := connection.Read(buf)
-	for {
-		buf := make([]byte, 1024)
-		n, err := conn.Read(buf)
-		if errors.Is(err, io.EOF) {
-			break
+	if d != '*' {
+		return "", nil, fmt.Errorf("invalid protocol")
+	}
+	var expectedNumberOfArgs int
+	_, err = fmt.Fscanf(r, "%d\r\n", &expectedNumberOfArgs)
+	if err != nil && err != io.EOF {
+		return "", nil, err
+	}
+	cmd := ""
+	args := make([]string, expectedNumberOfArgs)
+	for i := 0; i < expectedNumberOfArgs; i++ {
+		d, err := r.ReadByte()
+		if err != nil && err != io.EOF {
+			return "", nil, err
 		}
+		if d != '$' {
+			return "", nil, fmt.Errorf("not supported yet")
+		}
+		var size int
+		_, err = fmt.Fscanf(r, "%d\r\n", &size)
+		if err != nil && err != io.EOF {
+			return "", nil, err
+		}
+		buf := make([]byte, size)
+		_, err = io.ReadFull(r, buf)
+		if err != nil && err != io.EOF {
+			return "", nil, err
+		}
+		r.ReadByte()
+		r.ReadByte()
+		if i == 0 {
+			cmd = strings.ToUpper(string(buf))
+		} else {
+			args[i-1] = string(buf)
+		}
+	}
+	return cmd, args, nil
+}
+func handleClient(c net.Conn) {
+	defer c.Close()
+	for {
+		cmd, args, err := readCommand(c)
 		if err != nil {
-			fmt.Println("Error", err)
+			fmt.Println(err.Error())
+			writeError(c, "ERR "+err.Error())
+		}
+		fmt.Printf("%s %v\n", cmd, args)
+		if cmd == "" {
 			return
 		}
-		command_list := strings.Split(string(buf[:n]), "\r\n")
-		fmt.Println(command_list)
-		if command_list[2] == "PING" {
-			conn.Write([]byte("+PONG\r\n"))
-		} else if command_list[2] == "ECHO" {
-			echo_message := strings.Join(command_list[3:], "\r\n")
-			conn.Write([]byte(echo_message))
-		} else if command_list[2] == "SET" {
-			if len(command_list) >= 10 {
-				exp_time, _ := strconv.Atoi(command_list[10])
-				store.Set(command_list[3]+command_list[4], command_list[5]+"\r\n"+command_list[6]+"\r\n", time.Millisecond*time.Duration(exp_time))
-
-			} else {
-				store.Set(command_list[3]+command_list[4], command_list[5]+"\r\n"+command_list[6]+"\r\n", time.Hour*24)
-			}
-			conn.Write([]byte("+OK\r\n"))
-			if(role == "slave"){
-				fmt.Println("slave sending set request to master")
-				slave_connection.Write([]byte(string(buf[:n])))
-			}
-		} else if command_list[2] == "GET" {
-			conn.Write([]byte(printKeyVal(store, command_list[3]+command_list[4])))
-		} else if command_list[2] == "INFO" {
-			if role == "master" {
-
-				if len(command_list) >= 5 {
-					if command_list[4] == "replication" {
-						conn.Write([]byte("$89\r\nrole:master\r\nmaster_repl_offset:0\r\nmaster_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb\r\n"))
-					}
-				} else {
-					conn.Write([]byte("$11\r\nrole:master\r\n"))
-				}
-			} else {
-				if len(command_list) >= 5 {
-					if command_list[4] == "replication" {
-						conn.Write([]byte("$88\r\nrole:slave\r\nmaster_repl_offset:0\r\nmaster_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb\r\n"))
-					}
-				} else {
-					conn.Write([]byte("$10\r\nrole:slave\r\n"))
+		switch cmd {
+		case "PING":
+			writeSimpleString(c, "PONG")
+		case "ECHO":
+			writeBulkString(c, args[0])
+		case "SET":
+			lock.Lock()
+			items[args[0]] = args[1]
+			lock.Unlock()
+			writeSimpleString(c, "OK")
+			if len(args) == 5 && strings.ToUpper(args[2]) == "PX" {
+				px, err := strconv.Atoi(args[3])
+				if err == nil {
+					expirations[args[0]] = time.Now().Add(time.Millisecond * time.Duration(px))
 				}
 			}
-		} else if command_list[2] == "REPLCONF" {
-			conn.Write([]byte("+OK\r\n"))
-		} else if command_list[2] == "PSYNC" {
-			conn.Write([]byte("+FULLRESYNC " + "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb" + " 0\r\n"))
-			var emptyRDB, _ = hex.DecodeString("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2")
-			_, _ = conn.Write(append([]byte(fmt.Sprintf("$%d\r\n", len(emptyRDB))), emptyRDB...))
+			for _, slave := range slaves {
+				slave.Write([]byte(fmt.Sprintf("*3\r\n$3\r\nSET\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(args[0]), args[0], len(args[1]), args[1])))
+			}
+		case "GET":
+			lock.RLock()
+			val, ok := items[args[0]]
+			lock.RUnlock()
+			if !ok {
+				writeBulkString(c, "")
+			} else {
+				exp, ok := expirations[args[0]]
+				if ok && time.Now().After(exp) {
+					writeBulkString(c, "")
+					lock.Lock()
+					delete(items, args[0])
+					delete(expirations, args[0])
+					lock.Unlock()
+				} else {
+					writeBulkString(c, val)
+				}
+			}
+		case "INFO":
+			if len(args) == 0 || strings.ToLower(args[0]) != "replication" {
+				writeError(c, "ERR not supported yet")
+				break
+			}
+			var sb strings.Builder
+			for sk, sv := range info {
+				if args[0] != "" && sk != strings.ToLower(args[0]) {
+					continue
+				}
+				sb.WriteString("# " + sk + "\r\n")
+				for k, v := range sv {
+					sb.WriteString(fmt.Sprintf("%s:%s\r\n", k, v))
+				}
+			}
+			writeBulkString(c, sb.String())
+		case "REPLCONF":
+			writeSimpleString(c, "OK")
+			// if len(args) != 2 {
+			// 	writeError(c, "ERR wrong number of arguments for 'replconf' command")
+			// 	break
+			// }
+			// if strings.ToLower(args[0]) == "listening-port" {
+			// 	info["replication"]["listening-port"] = args[1]
+			// 	writeSimpleString(c, "OK")
+			// } else {
+			// 	writeError(c, "ERR not supported yet")
+			// }
+		case "PSYNC":
+			slaves = append(slaves, c)
+			// FULLRESYNC <REPL_ID> 0\r\n
+			writeSimpleString(c, fmt.Sprintln("FULLRESYNC", info["replication"]["master_replid"], 0))
+			// Send RDB file
+			// https://github.com/codecrafters-io/redis-tester/blob/main/internal/assets/empty_rdb_hex.md
+			b64 := "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog=="
+			// decode b64 base64 encoded string into bytes variable
+			b, _ := base64.StdEncoding.DecodeString(b64)
+			// $<length_of_file>\r\n<contents_of_file>
+			c.Write([]byte(fmt.Sprintf("$%d\r\n%s", len(b), b)))
+		case "QUIT":
+			return
+		case "EXIT":
+			return
+		default:
+			writeError(c, "ERR not supported yet")
 		}
 	}
 }
-
-func printKeyVal(tm *timedmap.TimedMap, key string) string {
-	d, ok := tm.GetValue(key).(string)
-	if !ok {
-		return "$-1\r\n"
+// https://redis.io/docs/latest/develop/reference/protocol-spec/
+func writeSimpleString(c net.Conn, msg string) {
+	c.Write([]byte("+" + msg + "\r\n"))
+}
+func writeBulkString(c net.Conn, msg string) {
+	if msg == "" {
+		c.Write([]byte("$-1\r\n"))
+		return
 	}
-	return d
+	c.Write([]byte("$" + fmt.Sprint(len(msg)) + "\r\n" + msg + "\r\n"))
+}
+func writeError(c net.Conn, msg string) {
+	c.Write([]byte("-" + msg + "\r\n"))
 }
