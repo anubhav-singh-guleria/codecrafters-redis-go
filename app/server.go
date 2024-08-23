@@ -79,13 +79,16 @@ func handleClient(conn net.Conn, role string, master_host string, master_port st
 	// Ensure we close the connection after we're done
 	defer conn.Close()
 	store := timedmap.New(50 * time.Millisecond)
-	connection, err := net.Dial("tcp", master_host+":"+master_port)
-	if err != nil {
-		fmt.Println("43: Failed to bind to port: " + master_port)
-		os.Exit(1)
+	var slave_connection net.Conn
+	if role == "slave" {
+		connection, err := net.Dial("tcp", master_host+":"+master_port)
+		if err != nil {
+			fmt.Println("43: Failed to bind to port: " + master_port)
+			os.Exit(1)
+		}
+		slave_connection = connection;
+		defer connection.Close()
 	}
-
-	defer connection.Close()
 
 	// buf := make([]byte, 1024)
 	// n, _ := connection.Read(buf)
@@ -110,12 +113,14 @@ func handleClient(conn net.Conn, role string, master_host string, master_port st
 			if len(command_list) >= 10 {
 				exp_time, _ := strconv.Atoi(command_list[10])
 				store.Set(command_list[3]+command_list[4], command_list[5]+"\r\n"+command_list[6]+"\r\n", time.Millisecond*time.Duration(exp_time))
-				
+
 			} else {
 				store.Set(command_list[3]+command_list[4], command_list[5]+"\r\n"+command_list[6]+"\r\n", time.Hour*24)
 			}
 			conn.Write([]byte("+OK\r\n"))
-			connection.Write([]byte(string(buf[:n])))
+			if(role == "slave"){
+				slave_connection.Write([]byte(string(buf[:n])))
+			}
 		} else if command_list[2] == "GET" {
 			conn.Write([]byte(printKeyVal(store, command_list[3]+command_list[4])))
 		} else if command_list[2] == "INFO" {
